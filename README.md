@@ -1,4 +1,4 @@
-# Emu68 USBNET Direct
+# Emu68 USBNET Direct - AI CODED
 
 **Direct 68k SANA-II networking for Emu68 — driving the PiStorm DWC2 USB controller natively as a CDC-NCM Ethernet adapter.**
 
