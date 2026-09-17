@@ -1,22 +1,28 @@
 # Emu68 USBNET Direct
 
-**A hardware-validated SANA-II Ethernet driver for PiStorm Classic that drives the Raspberry Pi 3A+ DWC2 USB controller directly from 68k code.**
+**Direct 68k SANA-II networking for Emu68 — driving the PiStorm DWC2 USB controller natively as a CDC-NCM Ethernet adapter.**
 
-This experiment turns a PiStorm-equipped Amiga into a native USB CDC-NCM Ethernet device without placing the USB networking datapath behind an ARM-side worker.
+This project turns a PiStorm-equipped Amiga into a USB Ethernet device.
 
-From AmigaOS, networking is exposed as a normal **SANA-II device**:
+On AmigaOS you get:
 
 ```text
 usbnet.device
 ```
 
-From the connected PC, the same machine appears as a standard **USB CDC-NCM Ethernet adapter**:
+On Windows you get a standard USB CDC-NCM network adapter:
 
 ```text
 PiStorm USB Ethernet
 ```
 
-The result is a direct path:
+No custom Windows driver is required.
+
+The important part of this version is that **`usbnet.device` itself drives the BCM2837 DWC2 USB controller directly from 68k code**.
+
+---
+
+## Quick overview
 
 ```text
 AmigaOS / MiamiDX
@@ -26,7 +32,6 @@ AmigaOS / MiamiDX
         |
         v
   usbnet.device
-   (68k code)
         |
         v
  BCM2837 DWC2
@@ -36,14 +41,10 @@ AmigaOS / MiamiDX
  USB CDC-NCM
         |
         v
- Windows / Linux / macOS host
+      Windows
 ```
 
-This README describes the **Direct-DWC2 68k** implementation and the hardware-validated `POC2N1` milestone.
-
----
-
-## Current milestone
+Validated milestone:
 
 ```text
 Emu68 USBNET Direct-DWC2 68k POC2N1
@@ -53,39 +54,522 @@ Hardware validated
 17 September 2026
 ```
 
-This is the fastest and most stable Direct-DWC2 version validated so far.
-
-Observed sustained RX throughput during testing was approximately:
+Observed sustained RX throughput:
 
 ```text
-1,180,000 - 1,200,000 bytes/s
+~1.18 - 1.20 MB/s
 ```
-
-while preserving reliable bidirectional Ethernet operation.
-
-The milestone intentionally keeps the proven DWC2 ownership and packet-granularity model rather than increasing complexity merely to chase larger transfer batches.
 
 ---
 
-## What makes the Direct version different
+## Requirements
 
-The central idea is simple:
+- PiStorm Classic
+- Raspberry Pi 3A+
+- Emu68 base compatible with this milestone
+- AmigaOS with MiamiDX
+- USB cable between the Pi USB device port and the Windows PC
+- Bebbo GCC if you want to rebuild `usbnet.device`
 
-> **`usbnet.device` itself owns the BCM2837 DWC2 controller.**
+---
 
-There is no separate ARM networking worker between SANA-II and USB.
+## Install `usbnet.device`
 
-The 68k driver accesses the Pi peripherals exposed by Emu68 and operates DWC2 directly through MMIO.
-
-The USB controller is mapped at:
+Copy:
 
 ```text
-0xF2980000
+usbnet.device
 ```
 
-with the required byte-swapped register accesses handled inside the driver.
+to:
 
-This gives the architecture a very short datapath:
+```text
+DEVS:Networks/
+```
+
+or another location used by your SANA-II configuration.
+
+Then configure MiamiDX to use:
+
+```text
+usbnet.device
+```
+
+as an Ethernet-style SANA-II interface.
+
+---
+
+## Recommended test network
+
+For the simplest first test, use a private point-to-point subnet:
+
+```text
+Windows: 192.168.137.1
+Amiga:   192.168.137.2
+Mask:    255.255.255.0
+```
+
+In MiamiDX:
+
+```text
+IP address:      192.168.137.2
+Netmask:         255.255.255.0
+Gateway:         192.168.137.1
+```
+
+For pure local testing, the gateway is not required.
+
+Bring the interface online and test:
+
+```text
+ping 192.168.137.1
+```
+
+From Windows:
+
+```powershell
+ping 192.168.137.2
+```
+
+Once this works, choose one of the two Windows configurations below.
+
+---
+
+# Windows setup
+
+There are two useful ways to connect the Amiga to the rest of the network.
+
+## Option 1 — NAT / Internet Connection Sharing
+
+This is the easiest configuration.
+
+Windows acts as a router between:
+
+```text
+Amiga USBNET
+        |
+        v
+Windows
+        |
+        v
+LAN / Wi-Fi / Internet
+```
+
+The Amiga remains on its own private subnet.
+
+A practical configuration is:
+
+```text
+Windows USBNET: 192.168.137.1
+Amiga:          192.168.137.2
+Gateway:        192.168.137.1
+```
+
+### Enable Internet Connection Sharing
+
+Open:
+
+```text
+Control Panel
+→ Network and Internet
+→ Network Connections
+```
+
+Identify:
+
+1. the adapter that already has Internet/LAN access;
+2. `PiStorm USB Ethernet`.
+
+Right-click the adapter that has Internet access:
+
+```text
+Properties
+→ Sharing
+```
+
+Enable:
+
+```text
+Allow other network users to connect through this computer's Internet connection
+```
+
+Select the PiStorm USB Ethernet adapter as the private/home connection.
+
+Windows ICS uses one interface as the public side and another as the private side, performing NAT between them. citeturn357750search1turn357750search6
+
+Depending on the current Windows configuration, ICS may automatically assign the private adapter an address. If it changes the subnet, either use the address Windows assigns or restore the Amiga configuration to match it.
+
+For the setup used during development, the intended addressing was:
+
+```text
+Windows USBNET: 192.168.137.1
+Amiga:          192.168.137.2
+```
+
+### MiamiDX settings
+
+Use:
+
+```text
+IP:       192.168.137.2
+Netmask:  255.255.255.0
+Gateway:  192.168.137.1
+```
+
+DNS can be:
+
+```text
+192.168.137.1
+```
+
+or your normal LAN/router DNS server.
+
+### Test
+
+From Amiga:
+
+```text
+ping 192.168.137.1
+```
+
+then:
+
+```text
+ping <LAN-router-address>
+```
+
+and finally an Internet IP.
+
+For example:
+
+```text
+ping 1.1.1.1
+```
+
+If raw IP works but hostnames do not, the remaining problem is DNS rather than USBNET.
+
+### Advantages
+
+- easiest setup;
+- does not disturb the normal LAN;
+- works even if the PC connects through Wi-Fi;
+- no changes required on the home router;
+- Amiga traffic is NATed behind Windows.
+
+### Limitations
+
+The Amiga is not a first-class member of the physical LAN.
+
+Machines elsewhere on the LAN normally cannot initiate a connection directly to:
+
+```text
+192.168.137.2
+```
+
+unless routing or port forwarding is configured.
+
+Use the bridge setup below if you want the Amiga to appear directly on the same Ethernet subnet as the rest of the LAN.
+
+---
+
+## Option 2 — Windows network bridge
+
+With a bridge, Windows joins:
+
+```text
+PiStorm USB Ethernet
+```
+
+and the PC's physical Ethernet adapter at Layer 2.
+
+The topology becomes:
+
+```text
+Amiga
+  |
+USB CDC-NCM
+  |
+Windows bridge
+  |
+physical Ethernet
+  |
+home LAN
+```
+
+The Amiga can then use an address from the same subnet as every other LAN machine.
+
+Example:
+
+```text
+Router:  192.168.1.1
+PC:      192.168.1.x
+Amiga:   192.168.1.200
+```
+
+Microsoft documents Windows Network Bridge specifically as a way to join separate network segments so they behave as a single network. citeturn357750search0
+
+### Important
+
+For this setup, bridge the PiStorm adapter with a **physical Ethernet adapter** whenever possible.
+
+Bridging to Wi-Fi is often problematic because ordinary Wi-Fi client mode does not behave exactly like transparent Ethernet bridging.
+
+### GUI method
+
+Open:
+
+```text
+Control Panel
+→ Network and Internet
+→ Network Connections
+```
+
+Select both:
+
+```text
+PiStorm USB Ethernet
+```
+
+and your physical Ethernet adapter.
+
+Right-click and choose:
+
+```text
+Bridge Connections
+```
+
+Windows should create:
+
+```text
+Network Bridge
+```
+
+The IP configuration for the Windows PC then belongs to the bridge rather than the individual member adapters.
+
+### Command-line diagnostics
+
+Run an elevated Command Prompt or PowerShell:
+
+```cmd
+netsh bridge show adapter
+```
+
+Windows 11 includes `netsh bridge` commands for inspecting and managing bridge-capable adapters. citeturn357750search0
+
+You can also list existing bridges with:
+
+```cmd
+netsh bridge list
+```
+
+### MiamiDX settings
+
+The Amiga now belongs directly to the LAN.
+
+For example, if your LAN is:
+
+```text
+192.168.1.0/24
+```
+
+with router:
+
+```text
+192.168.1.1
+```
+
+configure MiamiDX as:
+
+```text
+IP:       192.168.1.200
+Netmask:  255.255.255.0
+Gateway:  192.168.1.1
+DNS:      192.168.1.1
+```
+
+Choose an unused address or use whatever addressing policy you normally use on your LAN.
+
+### Test
+
+From Amiga:
+
+```text
+ping 192.168.1.1
+```
+
+then ping another LAN machine.
+
+From another machine on the LAN:
+
+```text
+ping 192.168.1.200
+```
+
+If both directions work, the bridge is operating as intended.
+
+### Advantages
+
+- Amiga sits directly on the home LAN;
+- no NAT;
+- LAN machines can initiate connections to the Amiga;
+- convenient for Telnet, FTP, HTTP servers and development tools;
+- behaves much more like a real Ethernet NIC.
+
+### Limitations
+
+- Windows bridge configuration is more sensitive than NAT;
+- third-party VPNs, virtual adapters and Hyper-V switches can interfere;
+- Wi-Fi adapters are not ideal bridge partners;
+- Windows firewall and adapter policies can affect traffic;
+- creating a bridge may temporarily disrupt the PC's own network connection.
+
+---
+
+# Which mode should I use?
+
+For general use:
+
+```text
+NAT / ICS
+```
+
+is the simplest and safest choice.
+
+Use:
+
+```text
+Windows Network Bridge
+```
+
+when you specifically want the Amiga to become a normal host on your existing LAN.
+
+In short:
+
+```text
+NAT:
+Amiga -> Windows -> LAN
+```
+
+versus:
+
+```text
+Bridge:
+Amiga == LAN peer
+```
+
+---
+
+## Windows troubleshooting
+
+### Confirm the adapter exists
+
+Open:
+
+```text
+ncpa.cpl
+```
+
+You should see a network adapter corresponding to:
+
+```text
+PiStorm USB Ethernet
+```
+
+If USB enumeration succeeded but the interface is not usable, check Device Manager.
+
+The implementation exposes CDC-NCM and a Microsoft-compatible `WINNCM` descriptor so supported Windows versions can bind a native NCM driver.
+
+---
+
+### Check addresses
+
+In PowerShell:
+
+```powershell
+ipconfig /all
+```
+
+For the NAT setup, verify that the USBNET adapter and Amiga are on the same private subnet.
+
+Typical example:
+
+```text
+Windows: 192.168.137.1
+Amiga:   192.168.137.2
+```
+
+---
+
+### Test only the direct USB link first
+
+Before debugging routing, NAT or DNS, confirm:
+
+```text
+Windows -> Amiga
+Amiga   -> Windows
+```
+
+with ping.
+
+Do not debug Internet access until this works reliably.
+
+---
+
+### Hyper-V / virtual adapters
+
+If the PC contains adapters such as:
+
+```text
+vEthernet
+Hyper-V Virtual Ethernet Adapter
+VPN adapters
+virtual switches
+```
+
+make sure you are sharing or bridging the correct physical adapter.
+
+Virtual network components can modify routing, interface metrics and bridge eligibility.
+
+---
+
+### Firewall
+
+If ping or incoming services fail, temporarily test with the relevant Windows firewall profile disabled or create an explicit rule.
+
+Re-enable normal firewall protection after diagnosing the problem.
+
+---
+
+## Device details
+
+Host-visible USB information:
+
+| Property | Value |
+| --- | --- |
+| Manufacturer | `PiStorm` |
+| Product | `PiStorm USB Ethernet` |
+| USB VID | `0x0525` |
+| USB PID | `0xA4AC` |
+| USB class | CDC-NCM |
+| NCM format | NTB16 |
+| Bulk OUT | EP1 |
+| Bulk IN | EP2 |
+| Notification | EP3 |
+| Bulk MPS | 512 bytes |
+| Max NTB | 2048 bytes |
+| Max Ethernet frame | 1514 bytes |
+
+Amiga MAC address:
+
+```text
+02:68:00:00:00:01
+```
+
+---
+
+## Driver architecture
+
+The Direct variant has an intentionally short path:
 
 ```text
 MiamiDX
@@ -99,345 +583,132 @@ DWC2 DMA
 USB
 ```
 
-The experiment is therefore as much a demonstration of what the PiStorm/Emu68 platform can expose to AmigaOS as it is a network driver.
+`usbnet.device` owns the BCM2837 DWC2 controller directly.
+
+There is no separate networking service in the USB datapath.
 
 ---
 
-## USB side
+## RX fast path
 
-The device implements **USB CDC-NCM** using the BCM2837 DWC2 controller in peripheral/device mode.
+The high-performance receive path is split between interrupt and task context.
 
-Host-visible identification:
-
-| Property | Value |
-| --- | --- |
-| Manufacturer | `PiStorm` |
-| Product | `PiStorm USB Ethernet` |
-| USB VID | `0x0525` |
-| USB PID | `0xA4AC` |
-| USB class | CDC-NCM |
-| NCM format | NTB16 |
-| Bulk OUT endpoint | EP1 |
-| Bulk IN endpoint | EP2 |
-| Notification endpoint | EP3 |
-| Bulk maximum packet size | 512 bytes |
-| Maximum NTB | 2048 bytes |
-| Maximum Ethernet datagram | 1514 bytes |
-
-The implementation also exposes the Microsoft OS descriptor identifying the interface as:
+On EP1 OUT completion:
 
 ```text
-WINNCM
+DWC2 IRQ
+   |
+finish DMA
+   |
+copy <=512-byte USB packet
+into handoff ring
+   |
+immediately re-arm EP1
+   |
+signal usbnet.unit
 ```
 
-allowing compatible Windows versions to bind their native NCM driver without a custom host driver.
-
----
-
-## Amiga side
-
-The Amiga interface is a conventional **SANA-II network device**.
-
-The current station address is:
+The interrupt handler does **not** perform:
 
 ```text
-02:68:00:00:00:01
+NCM parsing
+CopyToBuff
+ReplyMsg
+SANA-II delivery
 ```
-
-Supported commands include:
-
-```text
-CMD_READ
-CMD_WRITE
-
-S2_DEVICEQUERY
-S2_GETSTATIONADDRESS
-S2_CONFIGINTERFACE
-
-S2_ADDMULTICASTADDRESS
-S2_DELMULTICASTADDRESS
-S2_MULTICAST
-S2_BROADCAST
-
-S2_TRACKTYPE
-S2_UNTRACKTYPE
-
-S2_GETTYPESTATS
-S2_GETSPECIALSTATS
-S2_GETGLOBALSTATS
-
-S2_READORPHAN
-S2_ONLINE
-S2_OFFLINE
-
-NSCMD_DEVICEQUERY
-```
-
-The driver has been developed and tested with **MiamiDX**, but the interface is deliberately SANA-II rather than Miami-specific.
-
----
-
-## Receive architecture
-
-RX performance was the most sensitive part of the Direct-DWC2 design.
-
-The validated solution splits only the truly urgent USB work from the heavier networking work.
-
-### DWC2 IRQ fast path
-
-When EP1 OUT completes, the DWC2 interrupt reaches the Amiga as an external interrupt.
-
-At interrupt level, the driver performs only the work required to keep USB moving:
-
-```text
-EP1 OUT completion
-       |
-       v
-dma_end / CachePostDMA
-       |
-       v
-copy completed 0..512-byte packet
-into IRQ handoff ring
-       |
-       v
-immediately re-arm the same DMA buffer
-       |
-       v
-Signal(UnitTask)
-```
-
-The IRQ path deliberately does **not** perform:
-
-- NCM parsing;
-- Ethernet frame delivery;
-- `CopyToBuff`;
-- `ReplyMsg`;
-- SANA-II request completion.
 
 Those remain in task context.
 
-This keeps the interrupt handler short while removing the expensive delay between an EP1 completion and the next OUT transaction.
+This dramatically reduces the idle time between USB OUT transactions.
 
 ---
 
-## Single DMA owner
+## `usbnet.unit`
 
-The validated RX path deliberately retains a very conservative DWC2 transaction model:
-
-```text
-EP1 OUT transfer size = 512 bytes
-PKTCNT                = 1
-DMA buffers active    = 1
-```
-
-A second static buffer exists in the source layout, but this milestone uses one DMA owner.
-
-When a packet completes:
-
-1. the DMA transaction is completed;
-2. its payload is copied into the software handoff ring;
-3. the same DMA buffer is immediately re-armed;
-4. higher-level processing happens later.
-
-This preserves the ownership rules of the known-good datapath while greatly improving responsiveness.
-
----
-
-## IRQ handoff ring
-
-Between the IRQ handler and the task-level NCM parser is a small single-producer/single-consumer ring:
-
-```text
-32 slots
-512 bytes per slot
-```
-
-Ownership is simple:
-
-```text
-IRQ       = sole producer
-UnitTask  = sole consumer
-```
-
-Each slot corresponds to one packet-granular DWC2 completion.
-
-The ring exists only to decouple **USB hardware urgency** from **SANA-II processing latency**.
-
-It is not an additional network queue intended to accumulate large bursts.
-
----
-
-## UnitTask
-
-All non-trivial network processing remains in a dedicated Exec task:
+The Exec task:
 
 ```text
 usbnet.unit
 ```
 
-The task owns:
+handles:
 
-- NCM assembly and parsing;
-- receive-frame queues;
-- pending SANA-II reads;
+- NCM assembly;
+- NCM parsing;
+- Ethernet frame delivery;
+- pending `CMD_READ` requests;
 - `CopyToBuff`;
 - `CopyFromBuff`;
-- request completion;
-- `ReplyMsg`;
 - TX preparation;
-- bounded DWC2 service outside the RX IRQ fast path.
+- `ReplyMsg`;
+- normal SANA-II request completion.
 
-`BeginIO()` therefore remains lightweight: requests are posted to the unit task rather than executing the whole network operation in the caller's context.
-
-### Priority +1
-
-For this milestone:
+Milestone task priority:
 
 ```text
-usbnet.unit priority = +1
++1
 ```
 
-This small priority increase proved useful for RX.
-
-The intent is not to monopolize the 68k scheduler. It simply prevents a normal-priority network application from pre-empting `usbnet.unit` at every frame completion before the bounded RX drain reaches its next `Wait()`.
-
-The result was measurably better sustained receive behaviour without moving SANA-II work into interrupt context.
+This small priority increase improved sustained RX without moving OS-level work into interrupt context.
 
 ---
 
-## CDC-NCM datapath
+## CDC-NCM transport
 
-Ethernet frames are transported in standard **CDC-NCM NTB16** containers.
-
-Receive:
+RX:
 
 ```text
-USB EP1 OUT
-   |
-512-byte DWC2 DMA completions
-   |
+EP1 OUT
+  |
+512-byte USB packets
+  |
 IRQ handoff ring
-   |
-NCM NTB assembly
-   |
-NDP/datagram parsing
-   |
+  |
+NCM NTB16 assembly
+  |
 Ethernet frame
-   |
-SANA-II CMD_READ / S2_READORPHAN
+  |
+SANA-II
 ```
 
-Transmit:
+TX:
 
 ```text
 SANA-II CMD_WRITE
-   |
+  |
 Ethernet frame
-   |
-NCM NTB16 generation
-   |
-USB EP2 IN
-   |
-DWC2 buffer DMA
+  |
+NCM NTB16
+  |
+EP2 IN
 ```
-
-EP3 is used for CDC network notifications, including host carrier state.
-
----
-
-## DWC2 interrupt path
-
-The Pi 3 legacy interrupt controller exposes USB as GPU interrupt 9 in IRQ bank 1.
-
-Emu68 delivers the corresponding ARM interrupt to the Amiga side as an external interrupt.
-
-The driver verifies both levels before claiming it:
-
-```text
-BCM IRQ pending bit
-        +
-masked DWC2 interrupt status
-```
-
-For RX, only the urgent EP1 OUT transfer-complete event is consumed directly by the fast path.
-
-Other USB causes remain for the regular task-level DWC2 service.
-
-This preserves a useful separation:
-
-```text
-hardware deadline work  -> interrupt
-protocol / OS work      -> task
-```
-
----
-
-## VBlank fallback
-
-The DWC2 IRQ is the primary event source in this milestone.
-
-A lightweight VBlank path remains as a watchdog/fallback mechanism.
-
-It is not the normal high-performance receive datapath.
-
-The design therefore does not depend on continuously polling USB from VBlank to sustain traffic.
 
 ---
 
 ## Performance
 
-The current hardware-validated milestone reached approximately:
+Hardware-validated sustained receive throughput:
 
 ```text
-1.18 - 1.20 MB/s RX
+~1.18 - 1.20 MB/s
 ```
 
-in sustained testing.
+This is achieved while retaining:
 
-This is especially significant because the driver retains:
+```text
+EP1 transfer size = 512 bytes
+PKTCNT            = 1
+single DMA owner
+SANA-II delivery  = task context
+```
 
-- 512-byte EP1 OUT transfers;
-- `PKTCNT=1`;
-- one DMA owner;
-- SANA-II delivery in task context;
-- normal Exec request/reply semantics.
-
-The gain came primarily from reducing the dead time between DWC2 OUT completions rather than from enlarging USB transactions.
-
-This was an important development result: **latency in re-arming EP1 mattered more than simply making the buffering deeper.**
+The major performance improvement came from **re-arming the USB OUT endpoint immediately in the IRQ path**, rather than increasing transfer size or introducing aggressive batching.
 
 ---
 
-## A useful negative result
+## Build
 
-A later experiment attempted to batch multiple RX `ReplyMsg()` operations.
-
-That variant could cause receive throughput to collapse completely.
-
-It is intentionally **not** included in this milestone.
-
-The validated POC2N1 behaviour is:
-
-```text
-IRQ:
-    urgent DWC2 work only
-
-UnitTask:
-    parse
-    deliver
-    CopyToBuff
-    ReplyMsg normally
-```
-
-The conservative completion model is therefore part of the milestone, not an accidental omission.
-
----
-
-## Building `usbnet.device`
-
-The Direct driver is intentionally self-contained.
-
-Using Bebbo's Amiga GCC toolchain:
+Using Bebbo GCC:
 
 ```bash
 m68k-amigaos-gcc \
@@ -453,153 +724,65 @@ m68k-amigaos-gcc \
   -o usbnet.device
 ```
 
-The resulting binary is a native AmigaOS device.
-
-Install it in:
+Install the resulting binary as:
 
 ```text
 DEVS:Networks/usbnet.device
 ```
 
-or the location expected by the chosen SANA-II network stack configuration.
-
 ---
 
-## MiamiDX
+## Validated features
 
-A typical configuration presents `usbnet.device` to MiamiDX as an Ethernet-style SANA-II interface.
+The milestone has demonstrated:
 
-For the development network, a commonly used setup was:
-
-```text
-PC / host : 192.168.137.1
-Amiga     : 192.168.137.2
-```
-
-but these addresses are not hard-coded into the device and may be replaced by any suitable IP configuration.
-
-`usbnet.device` operates below IP and does not depend on a particular subnet.
-
-Once the interface has been configured and brought online, MiamiDX can use it like another SANA-II Ethernet adapter.
-
----
-
-## What has been validated
-
-The Direct-DWC2 development path has demonstrated:
-
-- successful DWC2 initialization from 68k code;
+- direct BCM2837 DWC2 access from 68k code;
 - USB device enumeration;
-- native host CDC-NCM binding;
-- EP0 control request handling;
-- CDC network-connection notification;
-- NCM NTB16 RX and TX;
+- Windows CDC-NCM binding;
+- EP0 control handling;
+- NCM NTB16 RX/TX;
 - bidirectional Ethernet;
-- SANA-II integration;
+- SANA-II operation;
 - MiamiDX operation;
-- DWC2 buffer DMA;
-- true DWC2 interrupt delivery to AmigaOS;
-- direct EP1 OUT IRQ servicing;
-- immediate RX DMA re-arm;
-- interrupt-to-task SPSC handoff;
-- UnitTask-owned SANA-II completion;
-- stable sustained RX in the ~1.2 MB/s range.
-
-The milestone is hardware validated on the PiStorm Classic / Raspberry Pi 3A+ development platform.
-
----
-
-## Design principles
-
-Several choices in this driver are intentionally conservative.
-
-### Keep one owner for hardware state
-
-The DWC2 DMA transaction is never ambiguously owned by multiple execution contexts.
-
-### Interrupt only what must be urgent
-
-The IRQ handler exists to prevent USB bus idle time, not to run a network stack at IPL6.
-
-### Keep SANA-II semantics in task context
-
-`CopyToBuff`, `CopyFromBuff`, queue ownership and `ReplyMsg` remain ordinary Exec/task operations.
-
-### Prefer measured behaviour over theoretical batching
-
-Larger queues and more batching are not automatically faster.
-
-Several experiments showed that reducing scheduling latency can matter more than increasing batch size.
-
-### Preserve a known-good milestone
-
-The source is intentionally labelled as a validation milestone rather than a finished production driver.
-
-Changes that improve one benchmark but damage long-running stability are not automatically carried forward.
-
----
-
-## Source
-
-The milestone is intentionally compact:
-
-```text
-usbnet.device.c
-MILESTONE.txt
-```
-
-`usbnet.device.c` contains:
-
-- Amiga resident/device glue;
-- SANA-II implementation;
-- DWC2 register definitions;
-- Pi mailbox USB power control;
-- USB descriptors;
-- CDC-NCM control requests;
-- NCM RX/TX;
-- buffer-DMA handling;
-- IRQ handling;
-- `usbnet.unit`;
-- RX/TX rings;
-- statistics and lifecycle handling.
-
-This makes the Direct experiment unusually easy to inspect: the entire network path can be followed through one source file.
+- DWC2 DMA;
+- real DWC2 IRQ delivery;
+- RX IRQ fast path;
+- immediate EP1 re-arm;
+- IRQ-to-task handoff;
+- sustained RX around 1.2 MB/s;
+- stable Telnet and normal TCP/IP use in the validated configuration.
 
 ---
 
 ## Status
 
-This is still an **experimental proof of concept**, not a production-quality network driver.
+This remains an experimental proof of concept, but it is a hardware-validated and highly usable milestone.
 
-The milestone is valuable because it provides a known-good reference point for:
+Potential future work includes:
 
-- direct DWC2 access from AmigaOS;
-- SANA-II over USB CDC-NCM;
-- PiStorm peripheral exposure;
-- IRQ-driven USB networking;
-- low-overhead 68k networking experiments.
-
-Areas that still deserve further work include:
-
-- extended compatibility testing;
-- more formal error recovery;
-- USB reset/disconnect corner cases;
-- complete production-quality statistics;
-- additional long-duration stress testing;
-- cleanup and modularization of the monolithic source;
-- further scheduler/latency optimization without destabilizing the validated datapath.
+- longer stress testing;
+- more complete statistics;
+- additional USB reset/reconnect handling;
+- production-level error recovery;
+- further scheduler tuning;
+- source modularization;
+- cleanup for eventual upstream-quality review.
 
 ---
 
 ## Credits
 
-This is an **unofficial experimental Emu68 / PiStorm extension**.
+This is an unofficial experimental Emu68 / PiStorm extension.
 
 It is not an official Emu68 release.
 
-The work depends on the Emu68 and PiStorm ecosystems and on the standard AmigaOS SANA-II networking model.
+The project depends on:
 
-The direct DWC2 implementation also builds on knowledge gained from earlier Raspberry Pi peripheral experiments, including the DWC2/MMIO and mailbox conventions validated on PiStorm Classic.
+- Emu68;
+- PiStorm;
+- AmigaOS Exec;
+- the SANA-II networking API;
+- MiamiDX for the principal Amiga-side validation.
 
 Upstream Emu68:
 
@@ -611,10 +794,10 @@ https://github.com/michalsc/Emu68
 
 ## License
 
-The Direct `usbnet.device` source is distributed under:
+The Direct `usbnet.device` source uses:
 
 ```text
 SPDX-License-Identifier: MPL-2.0
 ```
 
-See the source and the licensing requirements of the surrounding projects before redistributing complete firmware or derived builds.
+Check the source and surrounding project licenses before redistribution.
